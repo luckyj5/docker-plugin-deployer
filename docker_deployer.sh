@@ -6,8 +6,8 @@
 DOCKERLAB=docker.lab
 CRED=cred.lab
 
-USERNAME=
-CREDFILE=
+USERNAME=ec2-user
+CREDFILE=cred.lab
 
 PROC_MONITOR=/home/ec2-user/proc_monitor
 DOCKER_VERSION=17.12.1-ce
@@ -21,12 +21,12 @@ execute_remote_cmd() {
     cmd="$2"
     sudo="$3"
 
-    if [[ -z "${sudo}" ]]; then
-        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=quiet -i ${CREDFILE} $USERNAME@${ip} "${cmd}"
-    else
+    #if [[ -z "${sudo}" ]]; then
+    #    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=quiet -i ${CREDFILE} $USERNAME@${ip} "${cmd}"
+    #else
         # sudo
-        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=quiet -i ${CREDFILE} $USERNAME@${ip} -t -t "${cmd}"
-    fi
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=quiet -i ${CREDFILE} $USERNAME@${ip} -t -t "${cmd}"
+    #fi
 }
 
 print_msg() {
@@ -51,10 +51,21 @@ read_user_cred() {
 
 
 configure_plugin_settings() {
- 
-    #configuration section
+    if [[ "$1" == "" ]]; then
+        for ip in `cat ${DOCKERLAB} | grep -v \# | awk -F\| '{print $1}'`
+        do
+            if [ "${ip}" == "" ]; then
+                continue
+            fi
 
-    print_msg "configure plugin to run...."
+            print_msg "Running data-gen containers on  ${ip}"
+
+            execute_remote_cmd "${ip}" "./run.sh"
+        done
+    else
+
+        print_msg "Docker doesn't exist on $1"
+    fi
 
 }
 
@@ -87,7 +98,9 @@ deploy_docker_plugin() {
 
          print_msg "Install docker plugin to ${pub_ip}"
          execute_remote_cmd "${pub_ip}" " git clone https://github.com/splunk/docker-logging-plugin.git; cd docker-logging-plugin; git checkout develop; make"
-
+         execute_remote_cmd "${ip}" "docker plugin enable splunk-log-plugin"
+         rsync -raz -e "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=quiet -i $CREDFILE" --exclude=macos ${curdir}/run* $USERNAME@${ip}:~/
+         execute_remote_cmd "${ip}" "sudo chmod +x run*"
      done
 }
 
@@ -164,14 +177,14 @@ stop_docker_plugin() {
 
             print_msg "Stop docker on ${ip}"
             #execute_remote_cmd "${ip}" "ps ax | grep -i 'docker' | grep -v grep | awk '{print \$1}' | xargs kill -9 > /dev/null 2>&1"
-            execute_remote_cmd "$1" "sudo service docker stop > /dev/null 2>&1"
+            execute_remote_cmd "${ip}" "sudo service docker stop > /dev/null 2>&1"
             print_msg "Stop proc_monitor on ${ip}"
             execute_remote_cmd "${ip}" "ps ax | grep -i 'monitor' | grep -v grep | xargs kill -9 > /dev/null 2>&1"
         done
     else
         print_msg "Stop docker on $1"
         #execute_remote_cmd "$1" "ps ax | grep -i 'docker' | grep -v grep | awk '{print \$1}' | xargs kill -9 > /dev/null 2>&1"
-        execute_remote_cmd "$1" "sudo service docker stop > /dev/null 2>&1"
+        execute_remote_cmd "${ip}" "sudo service docker stop > /dev/null 2>&1"
         print_msg "Stop proc_monitor on $1"
         execute_remote_cmd "$1" "ps ax | grep -i 'monitor' | grep -v grep | awk '{print \$1}' | xargs kill -9 > /dev/null 2>&1"
 
@@ -179,8 +192,21 @@ stop_docker_plugin() {
 }
 
 restart_docker_plugin() {
-    stop_docker_plugin
-    start_docker_plugin
+    #stop_docker_plugin
+    #start_docker_plugin
+     if [[ "$1" == "" ]]; then
+        for ip in `cat ${DOCKERLAB} | grep -v \# | awk -F\| '{print $1}'`
+        do
+            if [ "${ip}" == "" ]; then
+                continue
+            fi
+
+            #rsync -raz -e "ssh -i $CREDFILE" ${curdir}/run.sh $USERNAME@$pub_ip:~/
+            #rsync -e "ssh -i $CREDFILE"  ${curdir}/run.sh $USERNAME@${ip}:~/
+        done
+    else
+        print_msg "Docker doesn't exist on $1"
+    fi
 }
 
 
@@ -194,7 +220,7 @@ clean_docker() {
             fi
 
             print_msg "Cleaning docker on ${ip}"
-            execute_remote_cmd "${ip}" "sudo yum remove docker docker-common docker-selinux docker-engine -y; sudo rm -rf /var/lib/docker; sudo rm -rf /etc/docker; rm -rf docker-logging-plugin"
+            execute_remote_cmd "${ip}" "sudo yum remove docker docker-common docker-selinux docker-engine -y; sudo rm -rf /var/lib/docker; sudo rm -rf /etc/docker; sudo rm -rf /var/log/docker; rm -rf docker-logging-plugin"
         done
     else
         print_msg "Docker doesn't exist on $1"
@@ -217,6 +243,7 @@ Usage: $0 options
     --restart
     --clean
     --check
+    --run-plugin #Start datagen container
 EOF
 exit 1
 }
@@ -245,7 +272,7 @@ for arg in "$@"; do
         "--start-compose")
             set -- "$@" "-l"
             ;;
-        "--docker-ps")
+        "--run-plugin")
             set -- "$@" "-o"
             ;;
         "--describe-topic")
@@ -291,7 +318,7 @@ do
 #           cmd="start-compose"
 #            ;;
         o)
-            cmd="docker-ps"
+            cmd="run-plugin"
             ;;
         i)
             cmd="describe_plugin"
@@ -331,6 +358,8 @@ elif [[ "$cmd" == "check" ]]; then
     check_docker_plugin
 elif [[ "$cmd" == "clean" ]]; then
     clean_docker
+elif [[ "$cmd" == "run-plugin" ]]; then
+    configure_plugin_settings "${num}"
 else
     usage
 fi
