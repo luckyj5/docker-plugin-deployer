@@ -50,7 +50,7 @@ read_user_cred() {
 }
 
 
-configure_plugin_settings() {
+run_container() {
     if [[ "$1" == "" ]]; then
         for ip in `cat ${DOCKERLAB} | grep -v \# | awk -F\| '{print $1}'`
         do
@@ -151,7 +151,8 @@ start_server() {
             fi
 
             print_msg "Start $1 on ${ip}"
-            execute_remote_cmd "${ip}" "$2"
+            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=quiet -i ${CREDFILE} $USERNAME@${ip} "$2"
+
         done
     else
         print_msg "Start $1 on $3"
@@ -160,11 +161,11 @@ start_server() {
 }
 
 start_docker_plugin() {
-    
+
     #Enable and run docker plugin
-    start_server "docker-plugin" "sudo service docker start" "$1"
+    start_server "docker" "sudo service docker start" "$1"
     #Start proc_monitor for resource monitoring
-    start_server "proc_monitor" "screen -S proc_monitor -m -d python $PROC_MONITOR/proc_monitor.py &" "$1"
+    start_server "proc_monitor" "screen -S proc_monitor -m -d python /home/ec2-user/proc_monitor/proc_monitor.py &" "$1"
 }
 
 stop_docker_plugin() {
@@ -192,21 +193,9 @@ stop_docker_plugin() {
 }
 
 restart_docker_plugin() {
-    #stop_docker_plugin
-    #start_docker_plugin
-     if [[ "$1" == "" ]]; then
-        for ip in `cat ${DOCKERLAB} | grep -v \# | awk -F\| '{print $1}'`
-        do
-            if [ "${ip}" == "" ]; then
-                continue
-            fi
+    stop_docker_plugin
+    start_docker_plugin
 
-            #rsync -raz -e "ssh -i $CREDFILE" ${curdir}/run.sh $USERNAME@$pub_ip:~/
-            #rsync -e "ssh -i $CREDFILE"  ${curdir}/run.sh $USERNAME@${ip}:~/
-        done
-    else
-        print_msg "Docker doesn't exist on $1"
-    fi
 }
 
 
@@ -243,7 +232,7 @@ Usage: $0 options
     --restart
     --clean
     --check
-    --run-plugin #Start datagen container
+    --run #Start datagen container
 EOF
 exit 1
 }
@@ -272,7 +261,7 @@ for arg in "$@"; do
         "--start-compose")
             set -- "$@" "-l"
             ;;
-        "--run-plugin")
+        "--run")
             set -- "$@" "-o"
             ;;
         "--describe-topic")
@@ -318,7 +307,7 @@ do
 #           cmd="start-compose"
 #            ;;
         o)
-            cmd="run-plugin"
+            cmd="run"
             ;;
         i)
             cmd="describe_plugin"
@@ -358,8 +347,8 @@ elif [[ "$cmd" == "check" ]]; then
     check_docker_plugin
 elif [[ "$cmd" == "clean" ]]; then
     clean_docker
-elif [[ "$cmd" == "run-plugin" ]]; then
-    configure_plugin_settings "${num}"
+elif [[ "$cmd" == "run" ]]; then
+    run_container
 else
     usage
 fi
