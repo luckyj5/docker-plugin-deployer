@@ -58,8 +58,9 @@ run_container() {
                 continue
             fi
 
+            rsync -raz -e "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=quiet -i $CREDFILE" --exclude=macos ${curdir}/run* $USERNAME@${ip}:~/
+            execute_remote_cmd "${ip}" "sudo chmod +x run*"
             print_msg "Running data-gen containers on  ${ip}"
-
             execute_remote_cmd "${ip}" "./run.sh"
         done
     else
@@ -99,8 +100,7 @@ deploy_docker_plugin() {
          print_msg "Install docker plugin to ${pub_ip}"
          execute_remote_cmd "${pub_ip}" " git clone https://github.com/splunk/docker-logging-plugin.git; cd docker-logging-plugin; git checkout develop; make"
          execute_remote_cmd "${ip}" "docker plugin enable splunk-log-plugin"
-         rsync -raz -e "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=quiet -i $CREDFILE" --exclude=macos ${curdir}/run* $USERNAME@${ip}:~/
-         execute_remote_cmd "${ip}" "sudo chmod +x run*"
+
      done
 }
 
@@ -160,12 +160,14 @@ start_server() {
     fi
 }
 
+
+
 start_docker_plugin() {
 
     #Enable and run docker plugin
     start_server "docker" "sudo service docker start" "$1"
     #Start proc_monitor for resource monitoring
-    start_server "proc_monitor" "screen -S proc_monitor -m -d python /home/ec2-user/proc_monitor/proc_monitor.py &" "$1"
+    #start_server "proc_monitor" "screen -S proc_monitor -m -d python /home/ec2-user/proc_monitor/proc_monitor.py &" "$1"
 }
 
 stop_docker_plugin() {
@@ -208,6 +210,7 @@ clean_docker() {
                 continue
             fi
 
+            stop_docker_plugin
             print_msg "Cleaning docker on ${ip}"
             execute_remote_cmd "${ip}" "sudo yum remove docker docker-common docker-selinux docker-engine -y; sudo rm -rf /var/lib/docker; sudo rm -rf /etc/docker; sudo rm -rf /var/log/docker; rm -rf docker-logging-plugin"
         done
