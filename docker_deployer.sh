@@ -5,28 +5,28 @@
 # Configuration file
 DOCKERLAB=docker.lab
 CRED=cred.lab
-
+#For Amazon AMI
 USERNAME=ec2-user
 CREDFILE=cred.lab
 
 PROC_MONITOR=/home/ec2-user/proc_monitor
-DOCKER_VERSION=17.12.1-ce
-DOCKER_RELEASE="stable"
-DOCKER_COMPOSE_VERSION=1.18.0
-
 curdir=`pwd`
+#For Ubuntu machine
+USER=ubuntu
+
+#Please specif which OS is being used (Ubuntu/ Centos/ Empty - by default it's Centos/Amazon AMI)
+OS=
 
 execute_remote_cmd() {
     ip="$1"
     cmd="$2"
     sudo="$3"
 
-    #if [[ -z "${sudo}" ]]; then
-    #    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=quiet -i ${CREDFILE} $USERNAME@${ip} "${cmd}"
-    #else
-        # sudo
-    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=quiet -i ${CREDFILE} $USERNAME@${ip} -t -t "${cmd}"
-    #fi
+    if [[ "${OS}" == Ubuntu ]]; then
+        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=quiet -i ${CREDFILE} $USER@${ip} "${cmd}"
+    else
+        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=quiet -i ${CREDFILE} $USERNAME@${ip} "${cmd}"
+    fi
 }
 
 print_msg() {
@@ -57,11 +57,29 @@ run_container() {
             if [ "${ip}" == "" ]; then
                 continue
             fi
+            linux_version=`execute_remote_cmd "${ip}" "gawk -F= '/^NAME/{print $2}' /etc/os-release"`
 
-            rsync -raz -e "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=quiet -i $CREDFILE" --exclude=macos ${curdir}/run* $USERNAME@${ip}:~/
-            execute_remote_cmd "${ip}" "sudo chmod +x run*"
-            print_msg "Running data-gen containers on  ${ip}"
-            execute_remote_cmd "${ip}" "./run.sh"
+
+            if grep -q Ubuntu <<<$linux_version; then
+
+                rsync -raz -e "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=quiet -i $CREDFILE" --exclude=macos ${curdir}/daemon.json* $USER@${ip}:~/
+                rsync -raz -e "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=quiet -i $CREDFILE" --exclude=macos ${curdir}/run* $USER@${ip}:~/
+                execute_remote_cmd "${ip}" "sudo chmod +x run*.sh"
+                execute_remote_cmd "${ip}" "sudo mv daemon.json /etc/docker/"
+                execute_remote_cmd "${ip}" "sudo service docker restart"
+                execute_remote_cmd "${ip}" "screen -S proc_monitor -m -d python /home/ubuntu/proc_monitor/proc_monitor.py &"
+                execute_remote_cmd "${ip}" "./run.sh"
+
+
+            else
+                #rsync -raz -e "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=quiet -i $CREDFILE" --exclude=macos ${curdir}/run* $USERNAME@${ip}:~/
+                #execute_remote_cmd "${ip}" "sudo chmod +x run*"
+                print_msg "hello"
+                execute_remote_cmd "${ip}" "screen -S proc_monitor -m -d python /home/ec2-user/proc_monitor/proc_monitor.py &"
+
+                print_msg "Running data-gen containers on ${ip}"
+                #execute_remote_cmd "${ip}" "sudo /home/ec2-user/run.sh"
+            fi
         done
     else
 
@@ -80,7 +98,14 @@ install_docker() {
             fi
 
             print_msg "Installing docker on  ${ip}"
-            execute_remote_cmd "${ip}" "sudo yum update -y; sudo yum install -y docker; sudo service docker start; sudo usermod -a -G docker ec2-user"
+            linux_version=`execute_remote_cmd "${ip}" "gawk -F= '/^NAME/{print $2}' /etc/os-release"`
+
+
+            if grep -q Ubuntu <<<$linux_version; then
+                execute_remote_cmd "${ip}" "sudo apt-get update -y; sudo apt-get install docker-ce -y; sudo usermod -a -G docker ubuntu; sudo apt-get install make -y"
+            else
+                execute_remote_cmd "${ip}" "sudo yum update -y; sudo yum install -y docker; sudo service docker start; sudo usermod -a -G docker ec2-user"
+            fi
         done
     else
         print_msg "Docker doesn't exist on $1"
@@ -120,7 +145,7 @@ check_docker_plugin() {
         #print_msg "${docker_status} on node ${ip}"
 
         if grep -q running <<<$docker_status; then
-
+            print_msg "Docker is up and running on ${ip}"
             print_msg "Check Splunk log plugin on ${ip}"
 
             if grep -q splunk-log-plugin <<<$plugin_status; then
@@ -139,19 +164,25 @@ check_docker_plugin() {
 }
 
 start_server() {
-    # $1 is the tag
-    # $2 is the cmd
-    # $3 is the ip
 
-    if [[ "$3" == "" ]]; then
+     if [[ "$1" == "" ]]; then
         for ip in `cat ${DOCKERLAB} | grep -v \# | awk -F\| '{print $1}'`
         do
             if [ "${ip}" == "" ]; then
                 continue
             fi
 
-            print_msg "Start $1 on ${ip}"
-            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=quiet -i ${CREDFILE} $USERNAME@${ip} "$2"
+            print_msg "Start docker on ${ip}"
+            linux_version=`execute_remote_cmd "${ip}" "gawk -F= '/^NAME/{print $2}' /etc/os-release"`
+
+
+            if grep -q Ubuntu <<<$linux_version; then
+                ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=quiet -i ${CREDFILE} $USER@${ip} "sudo service docker start"
+            else
+                ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=quiet -i ${CREDFILE} $USERNAME@${ip} "sudo service docker start"
+
+            fi
+
 
         done
     else
@@ -165,9 +196,9 @@ start_server() {
 start_docker_plugin() {
 
     #Enable and run docker plugin
-    start_server "docker" "sudo service docker start" "$1"
+    start_server
     #Start proc_monitor for resource monitoring
-    #start_server "proc_monitor" "screen -S proc_monitor -m -d python /home/ec2-user/proc_monitor/proc_monitor.py &" "$1"
+    #tart_server "proc_monitor" "screen -S proc_monitor -m -d python /home/ec2-user/proc_monitor/proc_monitor.py &" "$1"
 }
 
 stop_docker_plugin() {
@@ -182,7 +213,7 @@ stop_docker_plugin() {
             #execute_remote_cmd "${ip}" "ps ax | grep -i 'docker' | grep -v grep | awk '{print \$1}' | xargs kill -9 > /dev/null 2>&1"
             execute_remote_cmd "${ip}" "sudo service docker stop > /dev/null 2>&1"
             print_msg "Stop proc_monitor on ${ip}"
-            execute_remote_cmd "${ip}" "ps ax | grep -i 'monitor' | grep -v grep | xargs kill -9 > /dev/null 2>&1"
+            execute_remote_cmd "${ip}" "ps ax | grep -i 'monitor' | grep -v grep | awk '{print \$1}'| xargs kill -9 > /dev/null 2>&1"
         done
     else
         print_msg "Stop docker on $1"
@@ -212,7 +243,40 @@ clean_docker() {
 
             stop_docker_plugin
             print_msg "Cleaning docker on ${ip}"
-            execute_remote_cmd "${ip}" "sudo yum remove docker docker-common docker-selinux docker-engine -y; sudo rm -rf /var/lib/docker; sudo rm -rf /etc/docker; sudo rm -rf /var/log/docker; rm -rf docker-logging-plugin"
+            linux_version=`execute_remote_cmd "${ip}" "gawk -F= '/^NAME/{print $2}' /etc/os-release"`
+
+
+            if grep -q Ubuntu <<<$linux_version; then
+                execute_remote_cmd "${ip}" "sudo apt-get purge docker-ce -y > /dev/null 2>&1; sudo rm -rf /var/lib/docker;sudo rm -rf /var/run/docker sudo rm -rf /etc/docker/daemon.json; sudo rm *.sh > /dev/null 2>&1; sudo rm -rf docker-logging-plugin"
+            else
+                execute_remote_cmd "${ip}" "sudo yum remove docker docker-common docker-selinux docker-engine -y; sudo rm -rf /var/lib/docker; sudo rm -rf /etc/docker; sudo rm -rf /var/log/docker; rm -rf docker-logging-plugin; rm run*"
+            fi
+
+        done
+    else
+        print_msg "Docker doesn't exist on $1"
+    fi
+
+
+}
+
+#Only required for ubuntu
+install_pre_req() {
+
+    if [[ "$1" == "" ]]; then
+        for ip in `cat ${DOCKERLAB} | grep -v \# | awk -F\| '{print $1}'`
+        do
+            if [ "${ip}" == "" ]; then
+                continue
+            fi
+
+            #print_msg "yes"
+            print_msg "${ip}"
+            rsync -raz -e "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=quiet -i $CREDFILE" --exclude=macos ${curdir}/ubuntu_prereq.sh $USER@${ip}:~/
+            execute_remote_cmd "${ip}" "sudo chmod +x ubuntu_prereq.sh*"
+            execute_remote_cmd "${ip}" "./ubuntu_prereq.sh"
+
+
         done
     else
         print_msg "Docker doesn't exist on $1"
@@ -236,6 +300,7 @@ Usage: $0 options
     --clean
     --check
     --run #Start datagen container
+    --install-pre-req
 EOF
 exit 1
 }
@@ -261,7 +326,7 @@ for arg in "$@"; do
         "--check")
             set -- "$@" "-c"
             ;;
-        "--start-compose")
+        "--install-pre-req")
             set -- "$@" "-l"
             ;;
         "--run")
@@ -306,9 +371,9 @@ do
         r)
             cmd="restart"
             ;;
-#        l)
-#           cmd="start-compose"
-#            ;;
+        l)
+           cmd="install-pre-req"
+            ;;
         o)
             cmd="run"
             ;;
@@ -352,6 +417,9 @@ elif [[ "$cmd" == "clean" ]]; then
     clean_docker
 elif [[ "$cmd" == "run" ]]; then
     run_container
+elif [[ "$cmd" == "install-pre-req" ]]; then
+    install_pre_req
+
 else
     usage
 fi
