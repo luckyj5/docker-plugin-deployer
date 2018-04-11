@@ -15,7 +15,7 @@ curdir=`pwd`
 USER=ubuntu
 
 #Please specif which OS is being used (Ubuntu/ Centos/ Empty - by default it's Centos/Amazon AMI)
-OS=
+OS=Ubuntu
 
 execute_remote_cmd() {
     ip="$1"
@@ -124,7 +124,7 @@ deploy_docker_plugin() {
 
          print_msg "Install docker plugin to ${pub_ip}"
          execute_remote_cmd "${pub_ip}" " git clone https://github.com/splunk/docker-logging-plugin.git; cd docker-logging-plugin; git checkout develop; make"
-         execute_remote_cmd "${ip}" "docker plugin enable splunk-log-plugin"
+         execute_remote_cmd "${ip}" "make enable"
 
      done
 }
@@ -148,7 +148,7 @@ check_docker_plugin() {
             print_msg "Docker is up and running on ${ip}"
             print_msg "Check Splunk log plugin on ${ip}"
 
-            if grep -q splunk-log-plugin <<<$plugin_status; then
+            if grep -q splunk-logging-plugin <<<$plugin_status; then
                 print_msg "Splunk plugin found on node ${ip}"
             else
                 print_msg "Splunk plugin not found on node ${ip}"
